@@ -1,0 +1,44 @@
+#cloud-config
+# cloud-init user-data für die Sandbox-VM
+# Wird beim ersten Boot ausgeführt.
+
+hostname: sandbox
+manage_etc_hosts: true
+
+users:
+  - name: agent
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    lock_passwd: true   # kein Passwort-Login, nur SSH-Key
+    ssh_authorized_keys:
+      - __SSH_PUBKEY__   # wird von setup.sh ersetzt
+
+# SSH-Server: nur Key-Auth, kein Passwort
+ssh_pwauth: false
+disable_root: true
+
+# Pakete für den späteren Ausbau gleich mit installieren.
+# (kosten etwas erste Bootzeit, sparen uns aber Folgeschritte)
+package_update: true
+package_upgrade: false   # auf upgrade verzichten -> schnellerer erster Boot
+packages:
+  - openssh-server
+  - python3
+  - python3-pip
+  - curl
+  - wget
+  - ca-certificates
+  - htop
+  - vim-tiny
+  - locales-all
+
+# Sicherstellen dass sshd läuft und beim Boot startet
+runcmd:
+  - systemctl enable ssh
+  - systemctl start ssh
+  - echo "cloud-init done" > /var/log/sandbox-ready
+
+# Power-Down-Verhalten: graceful shutdown via QEMU monitor
+power_state:
+  mode: poweroff
+  condition: false   # wir wollen NICHT direkt nach init herunterfahren
