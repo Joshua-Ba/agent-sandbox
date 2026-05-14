@@ -67,7 +67,7 @@ Early stage. Current state:
       overlay disks, start/stop/verify scripts
 - [x] **Step 2**: Python wrapper `SandboxVM` with
       `run_command` / `put_file` / `get_file`
-- [ ] **Step 3**: GUI in the guest (XFCE + x11vnc)
+- [x] **Step 3**: GUI in the guest (XFCE + x11vnc)
 - [ ] **Step 4**: `screenshot()` over VNC, later `click()` / `type()`
 - [ ] **Step 5**: snapshot/restore – clean reset between agent tasks
 - [ ] **Step 6**: agent orchestrator and tool definitions for the LLM

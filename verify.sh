@@ -145,6 +145,14 @@ if [[ -f /var/log/sandbox-ready ]]; then
 else
     echo "ready:    no  (cloud-init läuft noch – mit --wait-cloud-init darauf warten)"
 fi
+echo "----- GUI-Stack -----"
+# active/inactive/failed/not-found – wir wollen wissen ob die Units überhaupt
+# da sind (cloud-init könnte sie noch nicht installiert haben) und ob sie laufen.
+for unit in sandbox-xvfb sandbox-xfce sandbox-vnc; do
+    state="$(systemctl is-active "$unit.service" 2>/dev/null || true)"
+    if [[ -z "$state" ]]; then state="not-found"; fi
+    printf "%-14s %s\n" "$unit:" "$state"
+done
 echo "----- Python -----"
 python3 --version
 REMOTE

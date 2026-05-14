@@ -1,5 +1,5 @@
 #cloud-config
-# cloud-init user-data für die Sandbox-VM
+# cloud-init user-data für die Sandbox-VM.
 # Wird beim ersten Boot ausgeführt.
 
 hostname: sandbox
@@ -17,11 +17,16 @@ users:
 ssh_pwauth: false
 disable_root: true
 
-# Pakete für den späteren Ausbau gleich mit installieren.
-# (kosten etwas erste Bootzeit, sparen uns aber Folgeschritte)
+# Pakete in zwei Gruppen:
+#  - Basis (Schritt 1+2): SSH, Python, Tools
+#  - GUI-Stack (Schritt 3): Xvfb als virtueller Framebuffer, XFCE als Desktop,
+#    x11vnc als VNC-Server, Firefox, Datei-Manager, Terminal, Texteditor.
+# Wir vermeiden xinit/lightdm (klassische Display-Manager), weil wir den
+# Stack komplett über systemd kontrollieren wollen.
 package_update: true
-package_upgrade: false   # auf upgrade verzichten -> schnellerer erster Boot
+package_upgrade: false
 packages:
+  # Basis
   - openssh-server
   - python3
   - python3-pip
@@ -32,13 +37,112 @@ packages:
   - vim-tiny
   - locales-all
 
-# Sicherstellen dass sshd läuft und beim Boot startet
+  # GUI-Stack
+  - xvfb            # virtuelles Display, kein echter Monitor nötig
+  - xfce4           # leichtgewichtiger Desktop
+  - xfce4-goodies   # ein paar nützliche XFCE-Extras
+  - x11vnc          # VNC-Server der ein existierendes X-Display exportiert
+  - dbus-x11        # XFCE braucht D-Bus pro Session
+
+  # Empfohlene GUI-Anwendungen
+  - firefox-esr     # Browser für Web-Tasks
+  - xterm           # zusätzliches Terminal (XFCE bringt xfce4-terminal mit)
+  - mousepad        # leichtgewichtiger Texteditor (XFCE-eigen)
+
+# Konfigurations-Dateien für den GUI-Stack via cloud-inits write_files:
+# drei systemd-Units (Xvfb, XFCE-Session, x11vnc) und ein Marker-Verzeichnis.
+write_files:
+  # ----- Xvfb: virtueller X-Server auf Display :1 -----------------------
+  - path: /etc/systemd/system/sandbox-xvfb.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Sandbox virtual X server (Xvfb on :1)
+      After=network.target
+      Before=sandbox-xfce.service
+
+      [Service]
+      Type=simple
+      User=agent
+      # +extension GLX: einige Apps wollen GLX, auch ohne echte GPU
+      # -screen 0 1280x800x24: Display :1, screen 0, Breite x Höhe x Farbtiefe
+      ExecStart=/usr/bin/Xvfb :1 -screen 0 1280x800x24 +extension GLX +extension RANDR
+      # Beim Stoppen sauber aufräumen
+      Restart=on-failure
+      RestartSec=2
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # ----- XFCE-Session: Desktop auf dem Xvfb-Display ---------------------
+  - path: /etc/systemd/system/sandbox-xfce.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Sandbox XFCE desktop session
+      Requires=sandbox-xvfb.service
+      After=sandbox-xvfb.service
+      Before=sandbox-vnc.service
+
+      [Service]
+      Type=simple
+      User=agent
+      Environment=DISPLAY=:1
+      Environment=HOME=/home/agent
+      # dbus-launch baut eine Session-Bus auf die XFCE-Komponenten brauchen
+      ExecStart=/usr/bin/dbus-launch --exit-with-session /usr/bin/startxfce4
+      Restart=on-failure
+      RestartSec=2
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # ----- x11vnc: exportiert :1 als VNC auf 127.0.0.1:5900 ---------------
+  - path: /etc/systemd/system/sandbox-vnc.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Sandbox VNC server (x11vnc on display :1)
+      Requires=sandbox-xfce.service
+      After=sandbox-xfce.service
+
+      [Service]
+      Type=simple
+      User=agent
+      Environment=DISPLAY=:1
+      # -forever:    nicht nach erstem Client-Disconnect beenden
+      # -shared:     mehrere Clients gleichzeitig erlaubt
+      # -nopw:       kein Passwort (wir binden nur an localhost, sicher genug)
+      #:  nur Connections von 127.0.0.1 akzeptieren
+      #              (Port-Forward macht's vom Host aus erreichbar)
+      # -rfbport:    expliziter Port
+      # -noxdamage:  stabiler bei virtuellen Displays
+      # -quiet:      weniger Logging
+      ExecStart=/usr/bin/x11vnc -display :1 -forever -shared -nopw \
+        -rfbport 5900 -noxdamage -quiet
+      Restart=on-failure
+      RestartSec=2
+
+      [Install]
+      WantedBy=multi-user.target
+
+# Sicherstellen dass alle Services beim Boot starten.
 runcmd:
+  # Basis
   - systemctl enable ssh
   - systemctl start ssh
+
+  # GUI-Stack erst nachdem die Pakete installiert sind (cloud-init garantiert
+  # diese Reihenfolge). daemon-reload damit die write_files-Units gefunden
+  # werden, dann enable + start.
+  - systemctl daemon-reload
+  - systemctl enable sandbox-xvfb.service sandbox-xfce.service sandbox-vnc.service
+  - systemctl start sandbox-xvfb.service sandbox-xfce.service sandbox-vnc.service
+
+  # Marker zuletzt – signalisiert "alles bereit" für ./verify.sh --wait-cloud-init
   - echo "cloud-init done" > /var/log/sandbox-ready
 
-# Power-Down-Verhalten: graceful shutdown via QEMU monitor
+# Power-Down: nicht direkt nach init herunterfahren
 power_state:
   mode: poweroff
-  condition: false   # wir wollen NICHT direkt nach init herunterfahren
+  condition: false

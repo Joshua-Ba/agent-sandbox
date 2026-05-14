@@ -19,7 +19,7 @@ LOG_FILE="$VM_DIR/qemu.log"
 MODE="${SANDBOX_MODE:-headless}"
 
 # Ressourcen
-MEM_MB="${SANDBOX_MEM_MB:-4096}"
+MEM_MB="${SANDBOX_MEM_MB:-6144}"
 CPUS="${SANDBOX_CPUS:-2}"
 
 # Port-Forwarding: host:gast
@@ -52,7 +52,7 @@ done
 
 log "Starte VM (mode=$MODE, mem=${MEM_MB}M, cpus=$CPUS)…"
 log "  SSH:  localhost:${SSH_PORT}  →  guest:22"
-[[ "$MODE" == "vnc" ]] && log "  VNC:  localhost:${VNC_PORT}  →  guest:5900"
+log "  VNC:  localhost:${VNC_PORT}  →  guest:5900   (verfügbar wenn GUI-Stack läuft)"
 
 # QEMU-Argumente zusammenbauen.
 #
