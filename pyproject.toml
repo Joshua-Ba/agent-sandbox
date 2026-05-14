@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-sandbox"
+version = "0.1.0"
+description = "Local, isolated execution environment for LLM agents."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "TBD" }
+authors = [{ name = "Joshua" }]
+keywords = ["llm", "agent", "sandbox", "vm", "qemu"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "paramiko>=3.4",
+    "typing_extensions>=4.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-timeout>=2.3",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-paramiko",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_sandbox"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: tests that require a running VM (slow, opt-in)",
+]
+# Default: nur unit tests. Integration explizit anfordern mit:
+#   pytest -m integration
+# oder:
+#   pytest -m "integration or not integration"   # alle
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:paramiko.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+# RUF001/2/3: warns about Unicode characters that look like ASCII (e.g. en-dash
+# vs hyphen). German comments/docstrings use these intentionally.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unused_ignores = true

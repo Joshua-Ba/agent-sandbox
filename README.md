@@ -65,7 +65,7 @@ Early stage. Current state:
 
 - [x] **Step 1**: VM setup – QEMU/HVF, Debian ARM64, cloud-init,
       overlay disks, start/stop/verify scripts
-- [ ] **Step 2**: Python wrapper `SandboxVM` with
+- [x] **Step 2**: Python wrapper `SandboxVM` with
       `run_command` / `put_file` / `get_file`
 - [ ] **Step 3**: GUI in the guest (XFCE + x11vnc)
 - [ ] **Step 4**: `screenshot()` over VNC, later `click()` / `type()`
@@ -97,6 +97,37 @@ First boot takes 1–2 minutes due to cloud-init.
 Subsequent boots are under 15 seconds.
 
 Detailed documentation for the VM layer: [`docs/vm-setup.md`](docs/vm-setup.md).
+
+## Python API
+ 
+After the VM is running, the Python wrapper lets you drive it programmatically:
+ 
+```bash
+pip install -e ".[dev]"
+```
+ 
+```python
+from agent_sandbox import SandboxVM
+ 
+with SandboxVM() as vm:
+    result = vm.run("uname -a")
+    print(result.stdout, result.exit_code, result.duration_s)
+ 
+    vm.put_file("local.txt", "/home/agent/remote.txt")
+    vm.get_file("/etc/os-release", "os-release")
+ 
+    vm.write_text("/tmp/script.sh", "#!/bin/sh\necho hi\n", mode=0o755)
+    print(vm.run("/tmp/script.sh", check=True).stdout)
+```
+ 
+Run the demo: `python examples/demo.py`
+ 
+Tests:
+ 
+```bash
+pytest                       # unit tests only (fast)
+pytest -m integration        # against a running VM
+```
 
 ## Design decisions
 
