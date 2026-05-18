@@ -49,6 +49,9 @@ packages:
   - xterm           # zusätzliches Terminal (XFCE bringt xfce4-terminal mit)
   - mousepad        # leichtgewichtiger Texteditor (XFCE-eigen)
 
+  # Screenshot-Tool (genutzt von SandboxVM.screenshot())
+  - scrot
+
 # Konfigurations-Dateien für den GUI-Stack via cloud-inits write_files:
 # drei systemd-Units (Xvfb, XFCE-Session, x11vnc) und ein Marker-Verzeichnis.
 write_files:
@@ -112,12 +115,17 @@ write_files:
       Environment=DISPLAY=:1
       # -forever:    nicht nach erstem Client-Disconnect beenden
       # -shared:     mehrere Clients gleichzeitig erlaubt
-      # -nopw:       kein Passwort (wir binden nur an localhost, sicher genug)
-      #:  nur Connections von 127.0.0.1 akzeptieren
-      #              (Port-Forward macht's vom Host aus erreichbar)
+      # -nopw:       kein Passwort
       # -rfbport:    expliziter Port
       # -noxdamage:  stabiler bei virtuellen Displays
       # -quiet:      weniger Logging
+      #
+      # Wir setzen explizit KEIN -localhost. Begründung: QEMUs hostfwd leitet
+      # Verbindungen an die Gast-NAT-IP (10.0.2.15:5900), nicht an 127.0.0.1.
+      # Mit -localhost würde x11vnc nur auf 127.0.0.1 lauschen und die
+      # hostfwd-Pakete wegwerfen. Die "localhost-only"-Beschränkung passiert
+      # ohnehin auf Host-Ebene: hostfwd=tcp:127.0.0.1:5900-:5900 bindet auf
+      # dem Host an 127.0.0.1, also kommt aus dem LAN nichts durch.
       ExecStart=/usr/bin/x11vnc -display :1 -forever -shared -nopw \
         -rfbport 5900 -noxdamage -quiet
       Restart=on-failure
@@ -125,6 +133,12 @@ write_files:
 
       [Install]
       WantedBy=multi-user.target
+
+  - path: /etc/environment
+    permissions: "0644"
+    content: |
+      DISPLAY=:1
+    append: true
 
 # Sicherstellen dass alle Services beim Boot starten.
 runcmd:

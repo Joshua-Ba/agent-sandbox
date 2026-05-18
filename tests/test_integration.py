@@ -125,3 +125,40 @@ class TestSandboxIdentity:
     def test_has_python3(self, vm: SandboxVM) -> None:
         result = vm.run("python3 --version", check=True)
         assert result.stdout.startswith("Python 3")
+
+
+class TestScreenshotIntegration:
+    """Erfordert dass cloud-init durch ist und der GUI-Stack läuft."""
+
+    def test_screenshot_returns_image_with_expected_dimensions(
+        self, vm: SandboxVM
+    ) -> None:
+        # Verify dass scrot überhaupt da ist – sonst überspringen mit klarer
+        # Botschaft statt CommandError
+        check = vm.run("command -v scrot")
+        if not check.ok:
+            pytest.skip("scrot nicht installiert (alte VM? neu provisionieren)")
+
+        img = vm.screenshot()
+        # Default Xvfb-Auflösung aus sandbox-xvfb.service
+        assert img.size == (1280, 800)
+        # RGB oder RGBA, je nach scrot-Version
+        assert img.mode in ("RGB", "RGBA")
+
+    def test_screenshot_returns_png_decodable_by_pillow(
+        self, vm: SandboxVM
+    ) -> None:
+        check = vm.run("command -v scrot")
+        if not check.ok:
+            pytest.skip("scrot nicht installiert")
+
+        img = vm.screenshot()
+        # Re-encode als PNG → wieder dekodieren, prüft konsistente Daten
+        import io as _io
+
+        from PIL import Image
+
+        buf = _io.BytesIO()
+        img.save(buf, format="PNG")
+        roundtripped = Image.open(_io.BytesIO(buf.getvalue()))
+        assert roundtripped.size == img.size

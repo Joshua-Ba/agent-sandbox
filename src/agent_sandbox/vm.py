@@ -16,17 +16,19 @@ Was wir absichtlich NICHT machen:
 
 from __future__ import annotations
 
+import io
 import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
+from typing import TYPE_CHECKING
+
+import paramiko
 
 # typing.Self gibt es erst ab Python 3.11. Wir nutzen typing_extensions als
 # Backport, damit der Code auf 3.10+ läuft (wie in pyproject.toml deklariert).
 from typing_extensions import Self
-
-import paramiko
 
 from .config import SandboxConfig
 from .errors import (
@@ -35,8 +37,14 @@ from .errors import (
     ConnectionError,
     FileTransferError,
     SandboxTimeoutError,
+    ScreenshotError,
 )
 from .lifecycle import is_running, start_vm, stop_vm, wait_for_port
+
+# Type-only import: macht Pillow nur für mypy/IDE sichtbar, nicht zur Laufzeit.
+# Pillow ist eine optionale Dependency – nur screenshot() braucht es.
+if TYPE_CHECKING:
+    from PIL.Image import Image as PILImage
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +161,65 @@ class SandboxVM:
 
         Returns:
             CommandResult mit stdout/stderr/exit_code/duration_s.
+            stdout/stderr sind als UTF-8 dekodierte Strings. Für binäre
+            Ausgaben siehe run_raw().
+        """
+        stdout_bytes, stderr_bytes, exit_code, duration = self._exec_raw(
+            command, timeout_s=timeout_s, cwd=cwd, env=env
+        )
+        result = CommandResult(
+            command=command,
+            exit_code=exit_code,
+            stdout=stdout_bytes.decode("utf-8", errors="replace"),
+            stderr=stderr_bytes.decode("utf-8", errors="replace"),
+            duration_s=duration,
+        )
+        if check and not result.ok:
+            raise CommandError(command, exit_code, result.stdout, result.stderr)
+        return result
+
+    def run_raw(
+        self,
+        command: str,
+        *,
+        timeout_s: float | None = None,
+        check: bool = False,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> tuple[bytes, bytes, int]:
+        """Wie run(), aber gibt stdout/stderr als rohe Bytes zurück.
+
+        Nützlich für Befehle die binäre Daten ausgeben (Screenshots, Binaries,
+        komprimierte Streams). stderr-Bytes werden für Fehlermeldungen
+        UTF-8-dekodiert (mit Replace), falls check=True und exit_code != 0.
+
+        Returns:
+            (stdout_bytes, stderr_bytes, exit_code)
+        """
+        stdout_bytes, stderr_bytes, exit_code, _ = self._exec_raw(
+            command, timeout_s=timeout_s, cwd=cwd, env=env
+        )
+        if check and exit_code != 0:
+            raise CommandError(
+                command,
+                exit_code,
+                stdout=stdout_bytes.decode("utf-8", errors="replace"),
+                stderr=stderr_bytes.decode("utf-8", errors="replace"),
+            )
+        return stdout_bytes, stderr_bytes, exit_code
+
+    def _exec_raw(
+        self,
+        command: str,
+        *,
+        timeout_s: float | None,
+        cwd: str | None,
+        env: dict[str, str] | None,
+    ) -> tuple[bytes, bytes, int, float]:
+        """Interne Kern-Routine: führt Befehl aus und gibt rohe Bytes zurück.
+
+        Returns:
+            (stdout_bytes, stderr_bytes, exit_code, duration_s)
         """
         client = self._ensure_connected()
         timeout = timeout_s if timeout_s is not None else self.config.command_timeout_s
@@ -165,10 +232,8 @@ class SandboxVM:
         try:
             stdin, stdout, stderr = client.exec_command(wrapped, timeout=timeout)
             stdin.close()
-            # exit_status blockiert bis Befehl fertig ist; das Timeout aus
-            # exec_command greift auf Channel-Reads, also lesen wir explizit:
-            stdout_text = stdout.read().decode("utf-8", errors="replace")
-            stderr_text = stderr.read().decode("utf-8", errors="replace")
+            stdout_bytes = stdout.read()
+            stderr_bytes = stderr.read()
             exit_code = stdout.channel.recv_exit_status()
         except TimeoutError as e:  # paramiko wirft socket.timeout (Alias)
             raise CommandTimeoutError(
@@ -176,18 +241,7 @@ class SandboxVM:
             ) from e
 
         duration = time.monotonic() - start_time
-        result = CommandResult(
-            command=command,
-            exit_code=exit_code,
-            stdout=stdout_text,
-            stderr=stderr_text,
-            duration_s=duration,
-        )
-
-        if check and not result.ok:
-            raise CommandError(command, exit_code, stdout_text, stderr_text)
-
-        return result
+        return stdout_bytes, stderr_bytes, exit_code, duration
 
     def _wrap_command(
         self,
@@ -282,6 +336,63 @@ class SandboxVM:
             raise FileTransferError(
                 f"read_text({remote_path}) fehlgeschlagen: {e}"
             ) from e
+
+    # ------------------------------------------------------------------ display
+
+    def screenshot(self, *, display: str = ":1") -> PILImage:
+        """Macht ein Screenshot des Gast-Desktops und gibt es als PIL.Image zurück.
+
+        Implementation: ruft `scrot` im Gast auf, schreibt PNG nach stdout,
+        liest die Bytes über SSH zurück und dekodiert sie mit Pillow.
+        Keine temp-Datei im Gast nötig.
+
+        Args:
+            display: X-Display (default ":1", wo unser Xvfb läuft).
+
+        Returns:
+            PIL.Image.Image – kann direkt .save(), .resize(), .tobytes() etc.
+
+        Raises:
+            CommandError: scrot scheiterte (z.B. weil Display nicht da ist).
+            ScreenshotError: scrot lief durch, aber PNG ließ sich nicht parsen.
+        """
+        # Pillow erst hier importieren, damit das Package auch ohne Pillow
+        # importierbar bleibt (für Tests die screenshot nicht brauchen).
+        try:
+            from PIL import Image
+        except ImportError as e:
+            raise ScreenshotError(
+                "Pillow ist nicht installiert. pip install pillow"
+            ) from e
+
+        # scrot -o /dev/stdout: PNG auf stdout, Overwrite egal (Stream).
+        # DISPLAY explizit per env: scrot braucht das, sonst sucht es :0
+        # (was nicht existiert, weil unser Xvfb auf :1 läuft).
+        stdout_bytes, stderr_bytes, _exit_code = self.run_raw(
+            "scrot -o /dev/stdout",
+            env={"DISPLAY": display},
+            check=True,
+        )
+
+        # scrot schreibt manchmal informative Meldungen auf stderr ("Saving
+        # screenshot to..."). Wir loggen das nur auf debug, nicht warnen.
+        if stderr_bytes:
+            logger.debug("scrot stderr: %s", stderr_bytes.decode("utf-8", errors="replace"))
+
+        if not stdout_bytes:
+            raise ScreenshotError("scrot lieferte 0 Bytes")
+
+        try:
+            img = Image.open(io.BytesIO(stdout_bytes))
+            # .open() ist lazy – ein vollständiger load() jetzt deckt korrupte
+            # PNGs sofort hier auf, nicht erst bei der nächsten Operation.
+            img.load()
+        except Exception as e:
+            raise ScreenshotError(
+                f"PNG-Daten von scrot konnten nicht dekodiert werden: {e}"
+            ) from e
+
+        return img
 
     # ------------------------------------------------------------------ internals
 

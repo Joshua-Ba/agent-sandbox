@@ -68,7 +68,7 @@ Early stage. Current state:
 - [x] **Step 2**: Python wrapper `SandboxVM` with
       `run_command` / `put_file` / `get_file`
 - [x] **Step 3**: GUI in the guest (XFCE + x11vnc)
-- [ ] **Step 4**: `screenshot()` over VNC, later `click()` / `type()`
+- [x] **Step 4**: `screenshot()` over VNC, later `click()` / `type()`
 - [ ] **Step 5**: snapshot/restore – clean reset between agent tasks
 - [ ] **Step 6**: agent orchestrator and tool definitions for the LLM
 - [ ] **Step 7**: integration with a local model (llama.cpp / MLX)

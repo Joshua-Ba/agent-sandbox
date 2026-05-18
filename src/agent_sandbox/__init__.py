@@ -10,6 +10,7 @@ from .errors import (
     FileTransferError,
     SandboxError,
     SandboxTimeoutError,
+    ScreenshotError,
     VMLifecycleError,
 )
 from .vm import CommandResult, SandboxVM
@@ -24,6 +25,7 @@ __all__ = [
     "SandboxError",
     "SandboxTimeoutError",
     "SandboxVM",
+    "ScreenshotError",
     "VMLifecycleError",
 ]
 

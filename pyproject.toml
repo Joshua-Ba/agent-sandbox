@@ -21,6 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "paramiko>=3.4",
+    "pillow>=10.0",
     "typing_extensions>=4.0; python_version < '3.11'",
 ]
 

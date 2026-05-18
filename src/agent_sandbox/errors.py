@@ -48,5 +48,11 @@ class FileTransferError(SandboxError):
     """put_file/get_file scheiterte."""
 
 
+class ScreenshotError(SandboxError):
+    """screenshot() scheiterte nach erfolgreichem scrot-Aufruf
+    (z.B. korrupte oder leere PNG-Daten).
+    """
+
+
 class SandboxTimeoutError(SandboxError):
     """Generisches Timeout (Boot, cloud-init readiness, etc.)."""

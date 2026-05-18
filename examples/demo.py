@@ -63,6 +63,18 @@ echo "Im running as $(whoami) on $(uname -m)"
         print(result.stdout.strip())
         vm.run("rm /tmp/hello.sh")
 
+        print("\n=== screenshot ===")
+        # Setzt voraus dass cloud-init durch ist und der GUI-Stack läuft.
+        try:
+            img = vm.screenshot()
+            print(f"Screenshot: {img.size[0]}x{img.size[1]} {img.mode}")
+            out = Path("screenshot.png")
+            img.save(out)
+            print(f"Gespeichert: {out.resolve()}")
+        except Exception as e:
+            print(f"Screenshot fehlgeschlagen: {e}")
+            print("  (cloud-init noch nicht durch? scrot nicht installiert?)")
+
         print("\n=== alles ok ===")
 
 

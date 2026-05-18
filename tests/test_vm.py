@@ -7,6 +7,7 @@ paramikos Transport wäre fragiler als Wert.
 
 from __future__ import annotations
 
+import io
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -128,3 +129,63 @@ class TestContextManager:
         vm = SandboxVM(config)
         vm.close()  # nichts zu schließen, sollte nicht werfen
         vm.close()  # nochmal, auch ok
+
+
+class TestRunRaw:
+    def test_returns_raw_bytes(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        # _exec_raw direkt mocken – wir testen nur das Wrapping
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+        with patch.object(
+            vm, "_exec_raw", return_value=(png_bytes, b"", 0, 0.05)
+        ):
+            stdout, stderr, exit_code = vm.run_raw("scrot -o /dev/stdout")
+        assert stdout == png_bytes
+        assert stderr == b""
+        assert exit_code == 0
+
+    def test_check_raises_on_failure(self, config: SandboxConfig) -> None:
+        from agent_sandbox import CommandError
+        vm = SandboxVM(config)
+        with patch.object(
+            vm, "_exec_raw", return_value=(b"", b"boom", 1, 0.01)
+        ), pytest.raises(CommandError) as exc_info:
+            vm.run_raw("false", check=True)
+        assert exc_info.value.exit_code == 1
+        assert "boom" in exc_info.value.stderr
+
+
+class TestScreenshot:
+    def test_returns_pil_image_for_valid_png(self, config: SandboxConfig) -> None:
+        from PIL import Image
+
+        # Echtes kleines PNG generieren (32x32 rot)
+        buf = io.BytesIO()
+        Image.new("RGB", (32, 32), color="red").save(buf, format="PNG")
+        png_bytes = buf.getvalue()
+
+        vm = SandboxVM(config)
+        with patch.object(vm, "run_raw", return_value=(png_bytes, b"", 0)):
+            img = vm.screenshot()
+
+        assert img.size == (32, 32)
+        assert img.mode == "RGB"
+
+    def test_raises_on_empty_output(self, config: SandboxConfig) -> None:
+        from agent_sandbox import ScreenshotError
+        vm = SandboxVM(config)
+        with (
+            patch.object(vm, "run_raw", return_value=(b"", b"", 0)),
+            pytest.raises(ScreenshotError, match="0 Bytes"),
+        ):
+            vm.screenshot()
+
+    def test_raises_on_corrupt_png(self, config: SandboxConfig) -> None:
+        from agent_sandbox import ScreenshotError
+        vm = SandboxVM(config)
+        # garbage statt PNG-Magic-Bytes
+        with (
+            patch.object(vm, "run_raw", return_value=(b"not a png", b"", 0)),
+            pytest.raises(ScreenshotError, match="dekodiert"),
+        ):
+            vm.screenshot()
