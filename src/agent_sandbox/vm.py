@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import paramiko
 
@@ -393,6 +393,170 @@ class SandboxVM:
             ) from e
 
         return img
+
+    # ------------------------------------------------------------------ input
+
+    # xdotool kennt Buttons als Zahlen. Wir bieten lesbare Namen an, lassen
+    # aber auch die Zahl direkt zu falls jemand was Exotisches braucht.
+    _BUTTON_MAP: ClassVar[dict[str, int]] = {
+        "left": 1,
+        "middle": 2,
+        "right": 3,
+        "scroll_up": 4,
+        "scroll_down": 5,
+        "scroll_left": 6,
+        "scroll_right": 7,
+    }
+
+    def click(
+        self,
+        x: int,
+        y: int,
+        *,
+        button: str = "left",
+        display: str = ":1",
+    ) -> None:
+        """Klick an Position (x, y) im Gast-Display.
+
+        Args:
+            x, y: Bildschirm-Koordinaten in Pixeln (0,0 = oben links).
+            button: "left", "middle", "right", oder ein numerischer xdotool-Code.
+            display: X-Display (default :1).
+
+        Bewegt den Cursor erst zur Position, dann klickt. Im Gegensatz zu
+        einem reinen `xdotool click N`, das an der aktuellen Mausposition
+        klicken würde, ist das deterministisch.
+        """
+        btn = self._resolve_button(button)
+        self._xdotool(
+            f"mousemove --sync {int(x)} {int(y)} click {btn}",
+            display=display,
+        )
+
+    def double_click(
+        self,
+        x: int,
+        y: int,
+        *,
+        button: str = "left",
+        display: str = ":1",
+    ) -> None:
+        """Doppelklick an Position (x, y).
+
+        Wir nutzen xdotools `--repeat 2`, das kürzere Intervalle als zwei
+        separate Aufrufe garantiert – Apps unterscheiden Doppelklick vom
+        zweifachen Einzelklick anhand der Verzögerung.
+        """
+        btn = self._resolve_button(button)
+        self._xdotool(
+            f"mousemove --sync {int(x)} {int(y)} click --repeat 2 {btn}",
+            display=display,
+        )
+
+    def move_mouse(self, x: int, y: int, *, display: str = ":1") -> None:
+        """Bewegt den Mauszeiger ohne zu klicken."""
+        self._xdotool(
+            f"mousemove --sync {int(x)} {int(y)}",
+            display=display,
+        )
+
+    def scroll(
+        self,
+        x: int,
+        y: int,
+        *,
+        direction: str = "down",
+        amount: int = 3,
+        display: str = ":1",
+    ) -> None:
+        """Scrollen an Position (x, y).
+
+        Args:
+            direction: "up", "down", "left", "right".
+            amount: Anzahl der "Scroll-Ticks" (1 Tick ≈ 3 Zeilen in den
+                meisten Apps; experimentell anpassen).
+        """
+        if amount < 1:
+            raise ValueError(f"scroll amount muss >= 1 sein, war {amount}")
+        if direction not in ("up", "down", "left", "right"):
+            raise ValueError(
+                f"direction muss up/down/left/right sein, war {direction!r}"
+            )
+        btn = self._BUTTON_MAP[f"scroll_{direction}"]
+        self._xdotool(
+            f"mousemove --sync {int(x)} {int(y)} click --repeat {int(amount)} {btn}",
+            display=display,
+        )
+
+    def type_text(
+        self,
+        text: str,
+        *,
+        delay_ms: int = 12,
+        display: str = ":1",
+    ) -> None:
+        """Tippt einen String als wäre er auf der Tastatur eingegeben.
+
+        Für einzelne Tasten oder Hotkeys (Strg+C etc.) siehe key().
+
+        Args:
+            delay_ms: Verzögerung zwischen den Zeichen. Default 12ms ist
+                xdotool-Default. Manche Apps verlieren Zeichen bei 0ms,
+                deshalb nicht weiter runtersetzen.
+        """
+        if delay_ms < 0:
+            raise ValueError("delay_ms muss >= 0 sein")
+        # `--` damit xdotool den Text nicht als Flags missversteht
+        # (z.B. ein String der mit '-' anfängt).
+        # shlex.quote für das eigentliche Text-Argument.
+        from shlex import quote
+        self._xdotool(
+            f"type --delay {int(delay_ms)} -- {quote(text)}",
+            display=display,
+        )
+
+    def key(self, keysym: str, *, display: str = ":1") -> None:
+        """Drückt eine einzelne Taste oder Tastenkombination.
+
+        Args:
+            keysym: X-Keysym-Name oder Kombination. Beispiele:
+                "Return", "Escape", "Tab", "BackSpace", "Delete",
+                "ctrl+c", "ctrl+shift+t", "alt+F4",
+                "Page_Down", "Home", "F1".
+
+        Die volle Liste findet sich in /usr/include/X11/keysymdef.h oder
+        unter `man 7 xkeyboard-config`.
+        """
+        if not keysym or any(c.isspace() for c in keysym):
+            # `key foo bar` würde zwei Tasten drücken; das war nicht gemeint.
+            # Wer das wirklich will, ruft key() mehrfach.
+            raise ValueError(
+                f"keysym darf keine Leerzeichen enthalten: {keysym!r}"
+            )
+        from shlex import quote
+        self._xdotool(f"key -- {quote(keysym)}", display=display)
+
+    @classmethod
+    def _resolve_button(cls, button: str | int) -> int:
+        """Übersetzt "left"/"right"/... zu xdotool-Button-Codes."""
+        if isinstance(button, int):
+            return button
+        try:
+            return cls._BUTTON_MAP[button]
+        except KeyError:
+            raise ValueError(
+                f"Unbekannter Button: {button!r}. "
+                f"Erlaubt: {list(cls._BUTTON_MAP)}"
+            ) from None
+
+    def _xdotool(self, args: str, *, display: str) -> None:
+        """Führt `xdotool <args>` mit DISPLAY=:1 aus und prüft Erfolg.
+
+        Bewusst eng gehalten – nicht öffentlich, damit wir später leicht auf
+        eine andere Backend-Implementation wechseln können (z.B. wayland's
+        ydotool oder direkter VNC-Input).
+        """
+        self.run(f"xdotool {args}", env={"DISPLAY": display}, check=True)
 
     # ------------------------------------------------------------------ internals
 

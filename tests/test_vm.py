@@ -189,3 +189,150 @@ class TestScreenshot:
             pytest.raises(ScreenshotError, match="dekodiert"),
         ):
             vm.screenshot()
+
+
+class TestInput:
+    """Unit-Tests für click/move/type/key/scroll.
+
+    Wir mocken _xdotool und prüfen welche Argumente angekommen sind.
+    """
+
+    def _captured_args(self, vm: SandboxVM) -> list[str]:
+        """Hilfsmethode: holt die args-Argumente aller _xdotool-Aufrufe."""
+        # mock.call.args = (positional_args,); _xdotool ist _xdotool(self, args, *, display)
+        # Wir mocken als Method, also kommt nur `args` als positional an.
+        # Tests setzen den Mock direkt am Objekt.
+        return [call.args[0] for call in vm._xdotool.call_args_list]  # type: ignore[attr-defined]
+
+    def test_click_default_left(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with patch.object(vm, "_xdotool") as mock_xd:
+            vm.click(100, 200)
+        mock_xd.assert_called_once_with("mousemove --sync 100 200 click 1", display=":1")
+
+    def test_click_right_button(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with patch.object(vm, "_xdotool") as mock_xd:
+            vm.click(50, 50, button="right")
+        mock_xd.assert_called_once_with("mousemove --sync 50 50 click 3", display=":1")
+
+    def test_click_invalid_button(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with pytest.raises(ValueError, match="Unbekannter Button"):
+            vm.click(0, 0, button="nope")
+
+    def test_click_coords_get_cast_to_int(self, config: SandboxConfig) -> None:
+        # Floats akzeptieren wir leise (durch int()-Cast); kein Crash
+        vm = SandboxVM(config)
+        with patch.object(vm, "_xdotool") as mock_xd:
+            vm.click(100.7, 200.3)  # type: ignore[arg-type]
+        mock_xd.assert_called_once_with("mousemove --sync 100 200 click 1", display=":1")
+
+    def test_double_click(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with patch.object(vm, "_xdotool") as mock_xd:
+            vm.double_click(10, 20)
+        mock_xd.assert_called_once_with(
+            "mousemove --sync 10 20 click --repeat 2 1", display=":1"
+        )
+
+    def test_move_mouse(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with patch.object(vm, "_xdotool") as mock_xd:
+            vm.move_mouse(640, 400)
+        mock_xd.assert_called_once_with("mousemove --sync 640 400", display=":1")
+
+    def test_scroll_down_default(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with patch.object(vm, "_xdotool") as mock_xd:
+            vm.scroll(100, 200)
+        # button 5 = scroll_down, default amount 3
+        mock_xd.assert_called_once_with(
+            "mousemove --sync 100 200 click --repeat 3 5", display=":1"
+        )
+
+    def test_scroll_up_custom_amount(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with patch.object(vm, "_xdotool") as mock_xd:
+            vm.scroll(100, 200, direction="up", amount=5)
+        mock_xd.assert_called_once_with(
+            "mousemove --sync 100 200 click --repeat 5 4", display=":1"
+        )
+
+    def test_scroll_invalid_direction(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with pytest.raises(ValueError, match="direction"):
+            vm.scroll(0, 0, direction="diagonal")  # type: ignore[arg-type]
+
+    def test_scroll_invalid_amount(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with pytest.raises(ValueError, match="amount"):
+            vm.scroll(0, 0, amount=0)
+
+    def test_type_text_simple(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with patch.object(vm, "_xdotool") as mock_xd:
+            vm.type_text("hello")
+        mock_xd.assert_called_once_with("type --delay 12 -- hello", display=":1")
+
+    def test_type_text_with_spaces_quoted(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with patch.object(vm, "_xdotool") as mock_xd:
+            vm.type_text("hello world")
+        mock_xd.assert_called_once_with(
+            "type --delay 12 -- 'hello world'", display=":1"
+        )
+
+    def test_type_text_with_shell_special_chars_quoted(
+        self, config: SandboxConfig
+    ) -> None:
+        vm = SandboxVM(config)
+        with patch.object(vm, "_xdotool") as mock_xd:
+            vm.type_text("$HOME `whoami`; rm -rf /")
+        # shlex.quote sollte ALLES einpacken, kein Char entkommt der Quotation
+        assert mock_xd.call_count == 1
+        args = mock_xd.call_args.args[0]
+        assert "$HOME" not in args.replace("'$HOME", "")  # nur in den quotes
+        assert args.startswith("type --delay 12 -- '")
+        assert args.endswith("'")
+
+    def test_type_text_leading_dash_safe(self, config: SandboxConfig) -> None:
+        # Strings die mit '-' anfangen würden ohne '--' als xdotool-Flag missverstanden
+        vm = SandboxVM(config)
+        with patch.object(vm, "_xdotool") as mock_xd:
+            vm.type_text("--help")
+        args = mock_xd.call_args.args[0]
+        assert " -- " in args
+
+    def test_type_text_custom_delay(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with patch.object(vm, "_xdotool") as mock_xd:
+            vm.type_text("x", delay_ms=50)
+        mock_xd.assert_called_once_with("type --delay 50 -- x", display=":1")
+
+    def test_type_text_negative_delay_rejected(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with pytest.raises(ValueError, match="delay_ms"):
+            vm.type_text("x", delay_ms=-1)
+
+    def test_key_single(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with patch.object(vm, "_xdotool") as mock_xd:
+            vm.key("Return")
+        mock_xd.assert_called_once_with("key -- Return", display=":1")
+
+    def test_key_combination(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with patch.object(vm, "_xdotool") as mock_xd:
+            vm.key("ctrl+c")
+        mock_xd.assert_called_once_with("key -- ctrl+c", display=":1")
+
+    def test_key_rejects_space(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with pytest.raises(ValueError, match="Leerzeichen"):
+            vm.key("ctrl c")
+
+    def test_key_rejects_empty(self, config: SandboxConfig) -> None:
+        vm = SandboxVM(config)
+        with pytest.raises(ValueError, match="Leerzeichen"):
+            vm.key("")

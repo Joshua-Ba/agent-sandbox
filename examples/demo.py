@@ -75,6 +75,20 @@ echo "Im running as $(whoami) on $(uname -m)"
             print(f"Screenshot fehlgeschlagen: {e}")
             print("  (cloud-init noch nicht durch? scrot nicht installiert?)")
 
+        print("\n=== input (Maus + Tastatur) ===")
+        try:
+            # Maus auf Bildschirm-Mitte und etwas tippen.
+            # Ohne fokussierte Eingabe-App geht der Text "ins Leere" – das
+            # ist okay, wir wollen nur sehen dass die Befehle durchlaufen.
+            vm.move_mouse(640, 400)
+            vm.click(640, 400)
+            vm.type_text("hello from agent-sandbox")
+            vm.key("Return")
+            vm.scroll(640, 400, direction="down", amount=2)
+            print("Maus bewegt, Klick gesendet, Text getippt, Enter, Scroll – ok")
+        except Exception as e:
+            print(f"Input fehlgeschlagen: {e}")
+
         print("\n=== alles ok ===")
 
 

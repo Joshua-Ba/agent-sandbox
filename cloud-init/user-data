@@ -52,6 +52,9 @@ packages:
   # Screenshot-Tool (genutzt von SandboxVM.screenshot())
   - scrot
 
+  # Maus/Tastatur-Synthese (genutzt von SandboxVM.click/type_text/key/...)
+  - xdotool
+
 # Konfigurations-Dateien für den GUI-Stack via cloud-inits write_files:
 # drei systemd-Units (Xvfb, XFCE-Session, x11vnc) und ein Marker-Verzeichnis.
 write_files:

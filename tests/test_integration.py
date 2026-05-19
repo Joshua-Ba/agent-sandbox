@@ -162,3 +162,69 @@ class TestScreenshotIntegration:
         img.save(buf, format="PNG")
         roundtripped = Image.open(_io.BytesIO(buf.getvalue()))
         assert roundtripped.size == img.size
+
+
+class TestInputIntegration:
+    """Maus/Tastatur-Tests gegen echtes Xvfb + xdotool.
+
+    Maus testen wir via xdotools eigenem getmouselocation – nach move_mouse
+    muss der Cursor exakt auf der angegebenen Position sein. Das ist eine
+    direkte, deterministische Verifikation.
+
+    Tastatur können wir nicht so leicht roundtrip-testen ohne eine App zum
+    Reinschreiben. Wir prüfen nur dass die Befehle ohne Fehler durchlaufen.
+    """
+
+    def _xdotool_available(self, vm: SandboxVM) -> bool:
+        return vm.run("command -v xdotool").ok
+
+    def _mouse_position(self, vm: SandboxVM) -> tuple[int, int]:
+        """Holt aktuelle Mausposition über xdotools getmouselocation.
+
+        Output-Format: 'x:640 y:400 screen:0 window:1234567'
+        """
+        result = vm.run(
+            "xdotool getmouselocation",
+            env={"DISPLAY": ":1"},
+            check=True,
+        )
+        fields = dict(p.split(":", 1) for p in result.stdout.split())
+        return int(fields["x"]), int(fields["y"])
+
+    def test_move_mouse_sets_position(self, vm: SandboxVM) -> None:
+        if not self._xdotool_available(vm):
+            pytest.skip("xdotool nicht installiert")
+
+        vm.move_mouse(100, 200)
+        assert self._mouse_position(vm) == (100, 200)
+
+        vm.move_mouse(640, 400)
+        assert self._mouse_position(vm) == (640, 400)
+
+    def test_click_moves_to_position_first(self, vm: SandboxVM) -> None:
+        if not self._xdotool_available(vm):
+            pytest.skip("xdotool nicht installiert")
+
+        vm.move_mouse(0, 0)
+        vm.click(500, 300)
+        assert self._mouse_position(vm) == (500, 300)
+
+    def test_type_text_runs_without_error(self, vm: SandboxVM) -> None:
+        if not self._xdotool_available(vm):
+            pytest.skip("xdotool nicht installiert")
+        vm.type_text("hello world")
+        vm.type_text("--with leading dashes")
+        vm.type_text("$HOME `not expanded` ; safe")
+
+    def test_key_runs_without_error(self, vm: SandboxVM) -> None:
+        if not self._xdotool_available(vm):
+            pytest.skip("xdotool nicht installiert")
+        vm.key("Return")
+        vm.key("Escape")
+        vm.key("ctrl+a")
+
+    def test_scroll_runs_without_error(self, vm: SandboxVM) -> None:
+        if not self._xdotool_available(vm):
+            pytest.skip("xdotool nicht installiert")
+        vm.scroll(640, 400, direction="down", amount=2)
+        vm.scroll(640, 400, direction="up", amount=1)
